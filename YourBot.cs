@@ -6,18 +6,11 @@ using Telegram.Bot.Types.ReplyMarkups;
 
 namespace YourEasyBot
 {
-	/* Notes:
-	 * 1. To use this example, first paste your bot token in the Project Properties > Debug > Application arguments
-	 * 2. This software is provided "as-is", without any warranty or liability (license MIT)
-	 * 3. This project can help you write little bots with sequential logic methods, awaiting consecutive user messages
-	 * 3.14 However this was written as fun project, it would not be reasonable to use it in serious company code
-	 */
-
 	public class YourBot : EasyBot
 	{
-		static void Main(string[] args)
+		public static void Main_Start()
 		{
-			var bot = new YourBot(args[0]);
+			var bot = new YourBot("token");
 			bot.Run();
 		}
 
@@ -34,11 +27,15 @@ namespace YourEasyBot
 				// execution continues here once we received a new text message
 				await Telegram.SendTextMessageAsync(chat, "What is your last name?");
 				var lastName = await NewTextMessage(update);
-				var genderMsg = await Telegram.SendTextMessageAsync(chat, "What is your gender?", replyMarkup: new InlineKeyboardMarkup(new InlineKeyboardButton[]
+                InlineKeyboardButton[] buttons = new InlineKeyboardButton[]
 				{
-					new("Male") { CallbackData = "🚹" }, new("Female") { CallbackData = "🚺" }, new("Other") { CallbackData = "⚧" }
-				}));
-				var genderEmoji = await ButtonClicked(update, genderMsg);
+					new InlineKeyboardButton("Male") { CallbackData = "🚹" },
+					new InlineKeyboardButton("Female") { CallbackData = "🚺" },
+					new InlineKeyboardButton("Other") { CallbackData = "⚧" }
+				};
+                InlineKeyboardMarkup replyMarkup = new InlineKeyboardMarkup(buttons);
+                var genderMsg = await Telegram.SendTextMessageAsync(chat, "What is your gender?", replyMarkup: replyMarkup);
+                var genderEmoji = await ButtonClicked(update, genderMsg);
 				ReplyCallback(update, "You clicked " + genderEmoji);
 				await Telegram.SendTextMessageAsync(chat, $"Welcome, {firstName} {lastName}! ({genderEmoji})" +
 					$"\n\nFor more fun, try to type /button@{BotName} in a group I'm in");

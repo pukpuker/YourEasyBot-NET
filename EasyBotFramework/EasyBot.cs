@@ -16,21 +16,22 @@ namespace YourEasyBot
 		public string BotName => Me.Username;
 
 		private int _lastUpdateId = -1;
-		private readonly CancellationTokenSource _cancel = new();
-		private readonly Dictionary<long, TaskInfo> _tasks = new();
+        private readonly CancellationTokenSource _cancel = new CancellationTokenSource();
+        private readonly Dictionary<long, TaskInfo> _tasks = new Dictionary<long, TaskInfo>();
 
-		public virtual Task OnPrivateChat(Chat chat, User user, UpdateInfo update) => Task.CompletedTask;
+        public virtual Task OnPrivateChat(Chat chat, User user, UpdateInfo update) => Task.CompletedTask;
 		public virtual Task OnGroupChat(Chat chat, UpdateInfo update) => Task.CompletedTask;
 		public virtual Task OnChannel(Chat channel, UpdateInfo update) => Task.CompletedTask;
 		public virtual Task OnOtherEvents(UpdateInfo update) => Task.CompletedTask;
 
-		public EasyBot(string botToken)
-		{
-			Telegram = new(botToken);
-			Me = Task.Run(() => Telegram.GetMeAsync()).Result;
-		}
+        public EasyBot(string botToken)
+        {
+            Telegram = new TelegramBotClient(botToken);
+            Me = Task.Run(() => Telegram.GetMeAsync()).Result;
+        }
 
-		public void Run() => RunAsync().Wait();
+
+        public void Run() => RunAsync().Wait();
 		public async Task RunAsync()
 		{
 			Console.WriteLine("Press Escape to stop the bot");
@@ -76,100 +77,112 @@ namespace YourEasyBot
 			}
 		}
 
-		private void HandleUpdate(Update update, UpdateKind updateKind, Message message = null, Chat chat = null)
-		{
-			TaskInfo taskInfo;
-			chat ??= message?.Chat;
-			long chatId = chat?.Id ?? 0;
-			lock (_tasks)
-				if (!_tasks.TryGetValue(chatId, out taskInfo))
-					_tasks[chatId] = taskInfo = new TaskInfo();
-			var updateInfo = new UpdateInfo(taskInfo) { UpdateKind = updateKind, Update = update, Message = message };
-			if (update.Type is UpdateType.CallbackQuery)
-				updateInfo.CallbackData = update.CallbackQuery.Data;
-			lock (taskInfo)
-				if (taskInfo.Task != null)
-				{
-					taskInfo.Updates.Enqueue(updateInfo);
-					taskInfo.Semaphore.Release();
-					return;
-				}
-			RunTask(taskInfo, updateInfo, chat);
-		}
+        private void HandleUpdate(Update update, UpdateKind updateKind, Message message = null, Chat chat = null)
+        {
+            TaskInfo taskInfo;
+            chat = chat ?? message?.Chat;
+            long chatId = chat?.Id ?? 0;
+            lock (_tasks)
+                if (!_tasks.TryGetValue(chatId, out taskInfo))
+                    _tasks[chatId] = taskInfo = new TaskInfo();
+            var updateInfo = new UpdateInfo(taskInfo) { UpdateKind = updateKind, Update = update, Message = message };
+            if (update.Type == UpdateType.CallbackQuery)
+                updateInfo.CallbackData = update.CallbackQuery.Data;
+            lock (taskInfo)
+                if (taskInfo.Task != null)
+                {
+                    taskInfo.Updates.Enqueue(updateInfo);
+                    taskInfo.Semaphore.Release();
+                    return;
+                }
+            RunTask(taskInfo, updateInfo, chat);
+        }
 
-		private void RunTask(TaskInfo taskInfo, UpdateInfo updateInfo, Chat chat)
-		{
-			Func<Task> taskStarter = (chat?.Type) switch
-			{
-				ChatType.Private => () => OnPrivateChat(chat, updateInfo.Message?.From, updateInfo),
-				ChatType.Group or ChatType.Supergroup => () => OnGroupChat(chat, updateInfo),
-				ChatType.Channel => () => OnChannel(chat, updateInfo),
-				_ => () => OnOtherEvents(updateInfo),
-			};
-			taskInfo.Task = Task.Run(taskStarter).ContinueWith(async t =>
-			{
-				lock (taskInfo)
-					if (taskInfo.Semaphore.CurrentCount == 0)
-					{
-						taskInfo.Task = null;
-						return;
-					}
-				var newUpdate = await ((IGetNext)updateInfo).NextUpdate(_cancel.Token);
-				RunTask(taskInfo, newUpdate, chat);
-			});
-		}
+        private void RunTask(TaskInfo taskInfo, UpdateInfo updateInfo, Chat chat)
+        {
+            Func<Task> taskStarter;
+            if (chat?.Type == ChatType.Private)
+                taskStarter = () => OnPrivateChat(chat, updateInfo.Message?.From, updateInfo);
+            else if (chat?.Type == ChatType.Group || chat?.Type == ChatType.Supergroup)
+                taskStarter = () => OnGroupChat(chat, updateInfo);
+            else if (chat?.Type == ChatType.Channel)
+                taskStarter = () => OnChannel(chat, updateInfo);
+            else
+                taskStarter = () => OnOtherEvents(updateInfo);
 
-		public async Task<UpdateKind> NextEvent(UpdateInfo update, CancellationToken ct = default)
-		{
-			using var bothCT = CancellationTokenSource.CreateLinkedTokenSource(ct, _cancel.Token);
-			var newUpdate = await ((IGetNext)update).NextUpdate(bothCT.Token);
-			update.Message = newUpdate.Message;
-			update.CallbackData = newUpdate.CallbackData;
-			update.Update = newUpdate.Update;
-			return update.UpdateKind = newUpdate.UpdateKind;
-		}
+            taskInfo.Task = Task.Run(taskStarter).ContinueWith(async t =>
+            {
+                lock (taskInfo)
+                    if (taskInfo.Semaphore.CurrentCount == 0)
+                    {
+                        taskInfo.Task = null;
+                        return;
+                    }
+                var newUpdate = await ((IGetNext)updateInfo).NextUpdate(_cancel.Token);
+                RunTask(taskInfo, newUpdate, chat);
+            });
+        }
 
-		public async Task<string> ButtonClicked(UpdateInfo update, Message msg = null, CancellationToken ct = default)
-		{
-			while (true)
-			{
-				switch (await NextEvent(update, ct))
-				{
-					case UpdateKind.CallbackQuery:
-						if (msg != null && update.Message.MessageId != msg.MessageId)
-							_ = Telegram.AnswerCallbackQueryAsync(update.Update.CallbackQuery.Id, null, cancellationToken: ct);
-						else
-							return update.CallbackData;
-						continue;
-					case UpdateKind.OtherUpdate
-						when update.Update.MyChatMember is ChatMemberUpdated
-						{ NewChatMember: { Status: ChatMemberStatus.Left or ChatMemberStatus.Kicked } }:
-						throw new LeftTheChatException(); // abort the calling method
-				}
-			}
-		}
+        public async Task<UpdateKind> NextEvent(UpdateInfo update, CancellationToken ct = default)
+        {
+            using (var bothCT = CancellationTokenSource.CreateLinkedTokenSource(ct, _cancel.Token))
+            {
+                var newUpdate = await ((IGetNext)update).NextUpdate(bothCT.Token);
+                update.Message = newUpdate.Message;
+                update.CallbackData = newUpdate.CallbackData;
+                update.Update = newUpdate.Update;
+                return update.UpdateKind = newUpdate.UpdateKind;
+            }
+        }
 
-		public async Task<MsgCategory> NewMessage(UpdateInfo update, CancellationToken ct = default)
-		{
-			while (true)
-			{
-				switch (await NextEvent(update, ct))
-				{
-					case UpdateKind.NewMessage
-						when update.MsgCategory is MsgCategory.Text or MsgCategory.MediaOrDoc or MsgCategory.StickerOrDice:
-							return update.MsgCategory; // NewMessage only returns for messages from these 3 categories
-					case UpdateKind.CallbackQuery:
-						_ = Telegram.AnswerCallbackQueryAsync(update.Update.CallbackQuery.Id, null, cancellationToken: ct);
-						continue;
-					case UpdateKind.OtherUpdate
-						when update.Update.MyChatMember is ChatMemberUpdated
-						{ NewChatMember: { Status: ChatMemberStatus.Left or ChatMemberStatus.Kicked } }:
-							throw new LeftTheChatException(); // abort the calling method
-				}
-			}
-		}
+        public async Task<string> ButtonClicked(UpdateInfo update, Message msg = null, CancellationToken ct = default)
+        {
+            while (true)
+            {
+                switch (await NextEvent(update, ct))
+                {
+                    case UpdateKind.CallbackQuery:
+                        if (msg != null && update.Message.MessageId != msg.MessageId)
+                            _ = Telegram.AnswerCallbackQueryAsync(update.Update.CallbackQuery.Id, null, cancellationToken: ct);
+                        else
+                            return update.CallbackData;
+                        continue;
+                    case UpdateKind.OtherUpdate:
+                        if (update.Update.MyChatMember is ChatMemberUpdated chatMemberUpdated)
+                        {
+                            if (chatMemberUpdated.NewChatMember.Status == ChatMemberStatus.Left || chatMemberUpdated.NewChatMember.Status == ChatMemberStatus.Kicked)
+                                throw new LeftTheChatException(); // abort the calling method
+                        }
+                        break;
+                }
+            }
+        }
 
-		public async Task<string> NewTextMessage(UpdateInfo update, CancellationToken ct = default)
+        public async Task<MsgCategory> NewMessage(UpdateInfo update, CancellationToken ct = default)
+        {
+            while (true)
+            {
+                switch (await NextEvent(update, ct))
+                {
+                    case UpdateKind.NewMessage:
+                        if (update.MsgCategory == MsgCategory.Text || update.MsgCategory == MsgCategory.MediaOrDoc || update.MsgCategory == MsgCategory.StickerOrDice)
+                            return update.MsgCategory; // NewMessage only returns for messages from these 3 categories
+                        break;
+                    case UpdateKind.CallbackQuery:
+                        _ = Telegram.AnswerCallbackQueryAsync(update.Update.CallbackQuery.Id, null, cancellationToken: ct);
+                        continue;
+                    case UpdateKind.OtherUpdate:
+                        if (update.Update.MyChatMember is ChatMemberUpdated chatMemberUpdated)
+                        {
+                            if (chatMemberUpdated.NewChatMember.Status == ChatMemberStatus.Left || chatMemberUpdated.NewChatMember.Status == ChatMemberStatus.Kicked)
+                                throw new LeftTheChatException(); // abort the calling method
+                        }
+                        break;
+                }
+            }
+        }
+
+        public async Task<string> NewTextMessage(UpdateInfo update, CancellationToken ct = default)
 		{
 			while (await NewMessage(update, ct) != MsgCategory.Text) { }
 			return update.Message.Text;

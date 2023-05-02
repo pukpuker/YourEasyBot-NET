@@ -15,26 +15,29 @@ namespace YourEasyBot
 		public string CallbackData;
 		public Update Update;
 
-		public MsgCategory MsgCategory => (Message?.Type) switch
-		{
-			MessageType.Text => MsgCategory.Text,
-			MessageType.Photo or MessageType.Audio or MessageType.Video or MessageType.Voice or MessageType.Document or MessageType.VideoNote
-			  => MsgCategory.MediaOrDoc,
-			MessageType.Sticker or MessageType.Dice
-			  => MsgCategory.StickerOrDice,
-			MessageType.Location or MessageType.Contact or MessageType.Venue or MessageType.Game or MessageType.Invoice or
-			MessageType.SuccessfulPayment or MessageType.WebsiteConnected
-			  => MsgCategory.Sharing,
-			MessageType.ChatMembersAdded or MessageType.ChatMemberLeft or MessageType.ChatTitleChanged or MessageType.ChatPhotoChanged or
-			MessageType.MessagePinned or MessageType.ChatPhotoDeleted or MessageType.GroupCreated or MessageType.SupergroupCreated or
-			MessageType.ChannelCreated or MessageType.MigratedToSupergroup or MessageType.MigratedFromGroup
-			  => MsgCategory.ChatStatus,
-			MessageType.VideoChatScheduled or MessageType.VideoChatStarted or MessageType.VideoChatEnded or MessageType.VideoChatParticipantsInvited
-			  => MsgCategory.VideoChat,
-			_ => MsgCategory.Other,
-		};
+        public MsgCategory MsgCategory
+        {
+            get
+            {
+                if (Message?.Type == MessageType.Text)
+                    return MsgCategory.Text;
+                else if (Message?.Type == MessageType.Photo || Message?.Type == MessageType.Audio || Message?.Type == MessageType.Video || Message?.Type == MessageType.Voice || Message?.Type == MessageType.Document || Message?.Type == MessageType.VideoNote)
+                    return MsgCategory.MediaOrDoc;
+                else if (Message?.Type == MessageType.Sticker || Message?.Type == MessageType.Dice)
+                    return MsgCategory.StickerOrDice;
+                else if (Message?.Type == MessageType.Location || Message?.Type == MessageType.Contact || Message?.Type == MessageType.Venue || Message?.Type == MessageType.Game || Message?.Type == MessageType.Invoice || Message?.Type == MessageType.SuccessfulPayment || Message?.Type == MessageType.WebsiteConnected)
+                    return MsgCategory.Sharing;
+                else if (Message?.Type == MessageType.ChatMembersAdded || Message?.Type == MessageType.ChatMemberLeft || Message?.Type == MessageType.ChatTitleChanged || Message?.Type == MessageType.ChatPhotoChanged || Message?.Type == MessageType.MessagePinned || Message?.Type == MessageType.ChatPhotoDeleted || Message?.Type == MessageType.GroupCreated || Message?.Type == MessageType.SupergroupCreated || Message?.Type == MessageType.ChannelCreated || Message?.Type == MessageType.MigratedToSupergroup || Message?.Type == MessageType.MigratedFromGroup)
+                    return MsgCategory.ChatStatus;
+                else if (Message?.Type == MessageType.VideoChatScheduled || Message?.Type == MessageType.VideoChatStarted || Message?.Type == MessageType.VideoChatEnded || Message?.Type == MessageType.VideoChatParticipantsInvited)
+                    return MsgCategory.VideoChat;
+                else
+                    return MsgCategory.Other;
+            }
+        }
 
-		private readonly TaskInfo _taskInfo;
+
+        private readonly TaskInfo _taskInfo;
 		internal UpdateInfo(TaskInfo taskInfo) => _taskInfo = taskInfo;
 		async Task<UpdateInfo> IGetNext.NextUpdate(CancellationToken cancel)
 		{
